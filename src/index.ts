@@ -1,5 +1,7 @@
 // Import modules
 import axios from "axios";
+import * as https from "https";
+import { EMAIL_REGEX, onlyNumber, PHONE_MASK, UNSIGNED_NUMBER_REGEX, URL_REGEX } from "./utils/common";
 
 // Load test data
 // import localData from "./data/records.json";
@@ -13,15 +15,14 @@ import axios from "axios";
  * @param localData array of objects
  * @returns number
  */
-export function calculateAvgBalance(localData: Array<SampleDateRecord>): number {
-  let total = 0;
+export function calculateAvgBalance(array: Array<{ balance: string }>): number {
+  const length = array.length;
+  const total = array.reduce((accum, current) => {
+    //get the sum
+    return (accum += onlyNumber(String(current.balance)));
+  }, 0);
 
-  for (let i = 0; i < localData.length; i++) {
-    const value = Number((localData[i].balance as string).replace(/[^0-9.-]+/g, ""));
-    total += value;
-  }
-
-  return total / localData.length;
+  return total / length;
 }
 
 /**
@@ -33,23 +34,16 @@ export function calculateAvgBalance(localData: Array<SampleDateRecord>): number 
  * @returns array of objects
  */
 export function findTagCounts(localData: Array<SampleDateRecord>): Array<TagCounts> {
-  const tagCounts: Array<TagCounts> = [];
+  const tags: Array<string> = [];
+  localData.forEach((element) => {
+    tags.push(...element.tags);
+  });
 
-  for (let i = 0; i < localData.length; i++) {
-    const tags = localData[i].tags;
-
-    for (let j = 0; j < tags.length; j++) {
-      const tag = tags[j];
-
-      for (let k = 0; k < tagCounts.length; k++) {
-        if (tagCounts[k].tag === tag) {
-          tagCounts[k].count++;
-        } else {
-          tagCounts.push({ tag, count: 1 });
-        }
-      }
-    }
-  }
+  const tagCounts = tags.reduce((accum: Array<TagCounts>, current: string) => {
+    const found = accum.findIndex((item) => item.tag === current);
+    found >= 0 ? accum[found].count++ : accum.push({ tag: current, count: 1 });
+    return accum;
+  }, []);
 
   return tagCounts;
 }
@@ -64,19 +58,46 @@ export function findTagCounts(localData: Array<SampleDateRecord>): Array<TagCoun
  *
  * @returns array of strings
  */
-export async function returnSiteTitles() {
+export async function returnSiteTitles(): Promise<string[]> {
   const urls = ["https://www.thetrevorproject.org/", "https://www.startrek.com/", "https://bwfbadminton.com/"];
 
-  const titles = [];
+  const titles: any = [];
 
-  for (const url of urls) {
-    const response = await axios.get(url);
+  const agent = new https.Agent({ keepAlive: true, rejectUnauthorized: false });
 
-    if (response.status === 200) {
-      const match = response.data.match(/<title>(.*?)<\/title>/);
-      titles.push(match[1]);
-    }
-  }
+  const getArray = urls.map(
+    async (url) =>
+      await axios.get(url, {
+        httpsAgent: agent,
+        headers: {
+          accept: "*/*",
+          host: "www.thetrevorproject.org",
+          "accept-encoding": "gzip, deflate, br",
+          connection: "keep-alive"
+        }
+      })
+  );
+
+  await Promise.all(getArray)
+    .then((res) => {
+      res.forEach((response) => {
+        titles.push(response.data.match(/<title>(.*?)<\/title>/));
+      });
+    })
+    .catch((err) => {
+      if (err.response) {
+        // console.log(err.response.data);
+        // console.log(err.response.status);
+        // console.log(err.response.headers);
+        return err.response;
+      } else if (err.request) {
+        // console.log(err.request);
+        return err.request;
+      } else {
+        // console.log("Error: ", err.message);
+        return err.message;
+      }
+    });
 
   return titles;
 }
@@ -94,39 +115,31 @@ export async function returnSiteTitles() {
  * @returns array of objects
  */
 export function reformatData(localData: Array<SampleDateRecord>): Array<SampleDateRecord> {
-  const reformattedData: Array<SampleDateRecord> = [];
+  let reformattedData: Array<SampleDateRecord> = [];
 
-  for (let i = 0; i < localData.length; i++) {
-    const record = localData[i];
+  reformattedData = localData.map((element) => {
+    let { picture, email } = element;
+    picture = String(picture) || "";
+    email = String(email) || "";
 
-    reformattedData.push({
-      _id: record._id,
-      index: record.index,
-      guid: record.guid,
-      isActive: record.isActive,
-      // Convert this from a string to a float/number
-      balance: record.balance,
-      // Validate this is a valid URL. Insert null if invalid.
-      picture: record.picture,
-      age: record.age,
-      eyeColor: record.eyeColor,
-      name: record.name,
-      gender: record.gender,
-      company: record.company,
-      // Validate the email format. Insert null if invalid.
-      email: record.email,
-      // Reformat the phone to be period-separated so 1.555.555.5555.
-      phone: record.phone,
-      address: record.address,
-      about: record.about,
-      // Reformat the date to be ISO 8601 in UTC time (i.e. 2021-06-17T02:28:41.000Z).
-      registered: record.registered,
-      latitude: record.latitude,
-      longitude: record.longitude,
-      tags: record.tags,
-      friends: record.friends
-    });
-  }
+    //check if picture URL is valid
+    if (!URL_REGEX.test(picture)) element.picture = null;
+
+    //check if email string is valid
+    if (!EMAIL_REGEX.test(email)) {
+      element.email = null;
+    }
+
+    //conversion to number
+    element.balance = onlyNumber(String(element.balance));
+
+    //reformat phone
+    element.phone = element.phone.replace(UNSIGNED_NUMBER_REGEX, "").replace(PHONE_MASK, "$1.$2.$3.$4");
+
+    element.registered = new Date(element.registered.replace(" ", "")).toISOString();
+
+    return element;
+  });
 
   return reformattedData;
 }
@@ -140,16 +153,12 @@ export function reformatData(localData: Array<SampleDateRecord>): Array<SampleDa
  * @returns string
  */
 export function buildAList(localData: Array<SampleDateRecord>): string {
-  let list = "<ul>";
-
-  for (let i = 0; i < localData.length; i++) {
-    const record = localData[i];
-    list += `<li>${record.name}</li>`;
-  }
-
-  list += "</ul>";
-
-  return list;
+  return (
+    localData.reduce((accum, current) => {
+      accum += "<li>" + current.name + "</li>";
+      return accum;
+    }, "<ul>") + "</ul>"
+  );
 }
 
 /**
@@ -168,23 +177,9 @@ export function filterAgeGreaterThan(
   age: number,
   count = 0
 ): Array<SampleDateRecord> {
-  const filteredData: Array<SampleDateRecord> = [];
+  const filteredData: Array<SampleDateRecord> = localData.filter((element) => element.isActive && element.age > age);
 
-  for (let i = 0; i < localData.length; i++) {
-    const record = localData[i];
-
-    if (record.isActive && record.age > age) {
-      if (count) {
-        if (filteredData.length < count) {
-          filteredData.push(record);
-        }
-      } else {
-        filteredData.push(record);
-      }
-    }
-  }
-
-  return filteredData;
+  return count ? filteredData.splice(0, count) : filteredData;
 }
 
 /**
@@ -202,32 +197,56 @@ export function doALotOfStuff(flex: any, manager: any): void {
   /**
    * Variable to save the current worker
    */
-  const currentWorker = manager.workerClient.sid;
+  const { sid } = manager.workerClient;
 
   // Ignore this function.
   function displayContainer(value: string): void {
     console.log(value);
   }
 
-  manager.insightsClient
-    .liveQuery("tr-task", `data.worker_sid == "${currentWorker}"`)
-    .then((args: Record<string, any>) => {
-      const otherTask = new Map();
-      const assignedTask = new Map();
-      const items = args.getItems();
-      Object.entries<any>(items).forEach(([key, value]) => {
-        if (value.status === "assigned") {
-          otherTask.delete(key);
-          assignedTask.set(key, value);
-        } else if (value.status === "wrapping") {
-          assignedTask.set(key, value);
-          otherTask.delete(key);
-        } else {
-          otherTask.set(key, value);
-        }
-      });
+  manager.insightsClient.liveQuery("tr-task", `data.worker_sid == "${sid}"`).then((args: Record<string, any>) => {
+    const otherTask = new Map();
+    const assignedTask = new Map();
+    const items = args.getItems();
+    Object.entries<any>(items).forEach(([key, value]) => {
+      otherTask.set(key, value);
+      if (value.status === "assigned" || value.status === "wrapping") {
+        otherTask.delete(key);
+        assignedTask.set(key, value);
+      }
+    });
 
-      if (assignedTask.size === 1 && otherTask.size === 0) {
+    if (assignedTask.size <= 1) {
+      displayContainer("none");
+      flex.Actions.invokeAction(
+        "HistoryPush",
+        "/agent-desktop/" + Array.from(manager.workerClient.reservations.keys())[0]
+      );
+    } else {
+      displayContainer("block");
+    }
+
+    manager.events.addListener("selectedViewChanged", (viewName: string) => {
+      if (viewName === "agent-desktop" && assignedTask.size <= 1) {
+        displayContainer("none");
+        flex.Actions.invokeAction(
+          "HistoryPush",
+          "/agent-desktop/" + Array.from(manager.workerClient.reservations.keys())[0]
+        );
+      }
+    });
+
+    args.on("itemUpdated", (args: any) => {
+      if (args.value.status === "assigned") {
+        otherTask.delete(args.key);
+        assignedTask.set(args.key, args.value);
+      } else if (args.value.status === "wrapping") {
+        otherTask.delete(args.key);
+      } else {
+        otherTask.set(args.key, args.value);
+      }
+
+      if (assignedTask.size <= 1 && window.location.href.includes("agent-desktop")) {
         displayContainer("none");
         flex.Actions.invokeAction(
           "HistoryPush",
@@ -236,61 +255,31 @@ export function doALotOfStuff(flex: any, manager: any): void {
       } else {
         displayContainer("block");
       }
-
-      manager.events.addListener("selectedViewChanged", (viewName: string) => {
-        if (viewName === "agent-desktop" && assignedTask.size === 1 && otherTask.size === 0) {
-          displayContainer("none");
-          flex.Actions.invokeAction(
-            "HistoryPush",
-            "/agent-desktop/" + Array.from(manager.workerClient.reservations.keys())[0]
-          );
-        }
-      });
-
-      args.on("itemUpdated", (args: any) => {
-        if (args.value.status === "assigned") {
-          otherTask.delete(args.key);
-          assignedTask.set(args.key, args.value);
-        } else if (args.value.status === "wrapping") {
-          otherTask.delete(args.key);
-        } else {
-          otherTask.set(args.key, args.value);
-        }
-
-        if (assignedTask.size === 1 && otherTask.size === 0 && window.location.href.includes("agent-desktop")) {
-          displayContainer("none");
-          flex.Actions.invokeAction(
-            "HistoryPush",
-            "/agent-desktop/" + Array.from(manager.workerClient.reservations.keys())[0]
-          );
-        } else {
-          displayContainer("block");
-        }
-      });
-
-      args.on("itemRemoved", (args: any) => {
-        otherTask.delete(args.key);
-        assignedTask.delete(args.key);
-        if (assignedTask.size === 1 && otherTask.size === 0) {
-          displayContainer("none");
-          flex.Actions.invokeAction(
-            "HistoryPush",
-            "/agent-desktop/" + Array.from(manager.workerClient.reservations.keys())[0]
-          );
-        } else {
-          displayContainer("block");
-        }
-      });
     });
+
+    args.on("itemRemoved", (args: any) => {
+      otherTask.delete(args.key);
+      assignedTask.delete(args.key);
+      if (assignedTask.size <= 1) {
+        displayContainer("none");
+        flex.Actions.invokeAction(
+          "HistoryPush",
+          "/agent-desktop/" + Array.from(manager.workerClient.reservations.keys())[0]
+        );
+      } else {
+        displayContainer("block");
+      }
+    });
+  });
 }
 
 /* eslint-disable */
-// (async ()=>{
+// (async () => {
 //   console.log(
-//     calculateAvgBalance(localData),
-//     findTagCounts(localData),
-//     await returnSiteTitles(),
-//     reformatData(localData),
-//     buildAList(localData)
+//     calculateAvgBalance(localData)
+//     // findTagCounts(localData),
+//     // await returnSiteTitles(),
+//     // reformatData(localData),
+//     // buildAList(localData)
 //   );
 // })();
