@@ -3,14 +3,14 @@ interface SampleDateRecord {
   index: number;
   guid: string;
   isActive: boolean;
-  balance: string;
-  picture: string;
+  balance: number | string;
+  picture: string | null;
   age: number;
   eyeColor: string;
   name: string;
   gender: string;
   company: string;
-  email: string;
+  email: string | null;
   phone: string;
   address: string;
   about: string;
